@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: dildogram-db
+    environment:
+      POSTGRES_USER: dildogram
+      POSTGRES_PASSWORD: dildogram_secret
+      POSTGRES_DB: dildogram
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dildogram -d dildogram"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dildogram-network
+
+  # Redis (optional, for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: dildogram-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - dildogram-network
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: dildogram-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: dildogram
+      DB_PASSWORD: dildogram_secret
+      DB_NAME: dildogram
+      DB_SSLMODE: disable
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_EXPIRE_HOURS: 72
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      FRONTEND_URL: http://localhost:3000
+      UPLOAD_DIR: ./uploads
+      MAX_UPLOAD_SIZE: 10485760
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "8080:8080"
+    volumes:
+      - backend_uploads:/root/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - dildogram-network
+    restart: unless-stopped
+
+  # Frontend (development)
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile.frontend.dev
+    container_name: dildogram-frontend-dev
+    environment:
+      VITE_API_URL: http://localhost:8080/api/v1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - dildogram-network
+    profiles:
+      - dev
+
+  # Frontend (production)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: dildogram-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - dildogram-network
+    profiles:
+      - prod
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  dildogram-network:
+    driver: bridge
